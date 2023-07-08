@@ -1,6 +1,7 @@
 package com.sander.wrdcounterworker.dto;
 
 public class FileData {
+    //UUID from user
     private String id;
     private String fileContent;
 
