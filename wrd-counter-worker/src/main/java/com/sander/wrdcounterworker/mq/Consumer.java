@@ -1,23 +1,19 @@
 package com.sander.wrdcounterworker.mq;
 
 import com.google.gson.Gson;
-import com.sander.wrdcounterworker.dto.FileData;
-import com.sander.wrdcounterworker.dto.Word;
-import com.sander.wrdcounterworker.dto.WordData;
-import com.sander.wrdcounterworker.dto.Words;
+import com.sander.wrdcounterworker.dto.*;
 import com.sander.wrdcounterworker.repository.WordRepository;
+import edu.stanford.nlp.ling.CoreLabel;
+import edu.stanford.nlp.pipeline.CoreDocument;
+import edu.stanford.nlp.pipeline.StanfordCoreNLP;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
 import com.sander.wrdcounterworker.tools.JsonCleaner;
+import smile.nlp.dictionary.EnglishStopWords;
 
-import javax.swing.text.html.Option;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.StringTokenizer;
+import java.util.*;
 
 @Controller
 @Component
@@ -30,11 +26,23 @@ public class Consumer {
         Gson gson = new Gson();
         Words wordsObj;
 
+        //Clean up JSON
         String cleanMessage = JsonCleaner.removeQuotesAndUnescape(message);
-        FileData fileData = gson.fromJson(cleanMessage, FileData.class);
+        //Create MQData object from JSON
+        MQData mqData = gson.fromJson(cleanMessage, MQData.class);
+        //Get variables from MQData
+        FileData fileData = mqData.fileData;
+        Boolean lastMsg = mqData.lastMsg;
+        ProcessingFlags processingFlags = mqData.processingFlags;
+        String fileString = fileData.getFileContent();
+        String id = fileData.getId();
+
+        //Clean file contents
+        fileString = fileString.replaceAll("[^a-zA-Z]", " ");
+        fileString = fileString.toLowerCase();
 
         //Check for existing word data in DB
-        Optional<WordData> existingWordData = wordRepository.findById(fileData.getId());
+        Optional<WordData> existingWordData = wordRepository.findById(id);
         if (existingWordData.isPresent()) {
             System.out.println("Got existing data from DB: " + existingWordData.get().getWords());
             wordsObj = gson.fromJson(existingWordData.get().getWords(), Words.class);
@@ -43,27 +51,41 @@ public class Consumer {
             wordsObj = new Words();
         }
 
-        if(message == null || message.isEmpty()) {
-            System.out.println("Empty message");
-        } else {
-            StringTokenizer tokens = new StringTokenizer(fileData.getFileContent());
-            int count = tokens.countTokens();
-            while(tokens.hasMoreTokens()) {
-                String cleanWord = tokens.nextToken();
-                if (cleanWord != null) {
-                    cleanWord = cleanWord.replaceAll("\\s+", "");
-                    cleanWord = cleanWord.replaceAll("[^a-zA-Z0-9_ ]", "");
-                    cleanWord = cleanWord.trim();
-                    cleanWord = cleanWord.toLowerCase();
-                    Word existingWord = wordsObj.findByWord(cleanWord);
-                    if(existingWord != null) {
-                        wordsObj.updateCountByWord(cleanWord);
-                    } else {
-                        wordsObj.add(new Word(cleanWord, 1));
-                    }
-                }
+        //Tokenize text and send each token to MQ
+        Properties props = new Properties();
+        props.setProperty("annotators", "tokenize");
+
+        StanfordCoreNLP pipeline = new StanfordCoreNLP(props);
+        CoreDocument doc = new CoreDocument(fileString);
+        pipeline.annotate(doc);
+        for (CoreLabel token: doc.tokens()) {
+            if(EnglishStopWords.DEFAULT.contains(token.word()) && processingFlags.ignoreStopWords) continue; //Pass stopword if user has chosen to filter out stopwords
+            Word existingWord = wordsObj.findByWord(token.word());
+            if(existingWord != null) {
+                wordsObj.updateCountByWord(token.word());
+            } else {
+                wordsObj.add(new Word(token.word(), 1));
             }
+        }
+        if(processingFlags.ignoreOutliers && lastMsg) { //Remove outliers from the end result
+            Optional<WordData> wordData = wordRepository.findById(id);
+            Words tempWords = new Words();
+            if(wordData.isPresent()) {
+                wordsObj = gson.fromJson(wordData.get().getWords(), Words.class);
+                if (wordsObj != null) {
+                    for (Word word: wordsObj.words) {
+                        if (word.getCount() > 3) tempWords.add(word);
+                    }
+                    wordsObj = tempWords;
+                }
+            } else if (wordsObj != null) {
+                for (Word word: wordsObj.words) {
+                    if (word.getCount() > 3) tempWords.add(word);
+                }
+                wordsObj = tempWords;
+            }
+        }
         System.out.println("Message received and processed!");
-        wordRepository.save(new WordData(fileData.getId(), gson.toJson(wordsObj)));}
+        wordRepository.save(new WordData(id, gson.toJson(wordsObj)));
     }
 }
