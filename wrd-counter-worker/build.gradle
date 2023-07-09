@@ -4,6 +4,16 @@ plugins {
 	id 'io.spring.dependency-management' version '1.1.0'
 }
 
+tasks.withType(Jar) { duplicatesStrategy = DuplicatesStrategy.EXCLUDE}
+
+tasks.withType(Zip){
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+tasks.withType(Tar) {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
 group = 'com.sander'
 version = '0.0.1-SNAPSHOT'
 
