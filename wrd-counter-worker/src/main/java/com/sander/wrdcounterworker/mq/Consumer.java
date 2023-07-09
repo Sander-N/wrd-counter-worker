@@ -8,6 +8,7 @@ import com.sander.wrdcounterworker.dto.Words;
 import com.sander.wrdcounterworker.repository.WordRepository;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.stereotype.Controller;
 import com.sander.wrdcounterworker.tools.JsonCleaner;
@@ -23,7 +24,8 @@ import java.util.StringTokenizer;
 public class Consumer {
     @Autowired
     WordRepository wordRepository;
-    @RabbitListener(queues = "wrd-counter-queue")
+    public static final String QUEUE = "wrd-counter-queue";
+    @RabbitListener(queues = QUEUE)
     public void consumeMessage(String message) {
         Gson gson = new Gson();
         Words wordsObj;
